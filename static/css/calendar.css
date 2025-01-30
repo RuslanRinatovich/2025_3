@@ -1,0 +1,22 @@
+td.sat {
+  color: red;
+}
+
+td.sun {
+  color: red;
+}
+
+.holiday {
+  color: red;
+}
+
+th {
+ background-color: #04AA6D;
+  color: white;
+}
+
+table {
+  width: 340px;
+}
+
+
