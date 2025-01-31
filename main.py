@@ -20,6 +20,7 @@ HOST = "192.168.2.202"
 PORT = "5432"
 KEY_WORD = "12345"
 RSS_HOST = "127.0.0.1"
+
 current_year = datetime.datetime.now().year
 current_month = datetime.datetime.now().month
 print(current_month)
@@ -37,9 +38,11 @@ def job():
 
 app = Flask(__name__)
 
-month = ['январь', 'февраль', 'март', 'апрель', 'май', 'июнь', 'июль', 'август', 'сентябрь', 'октябрь', 'ноябрь',         'декабрь', ]
+month = ['январь', 'февраль', 'март', 'апрель', 'май', 'июнь', 'июль', 'август', 'сентябрь', 'октябрь', 'ноябрь',
+         'декабрь', ]
 
-month_eng = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
+month_eng = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October',
+             'November', 'December']
 
 
 @app.route('/')
@@ -48,6 +51,7 @@ def index():
     param = {}
     param['username'] = "Пользователь"
     param['title'] = 'Домашняя страница'
+    # получаем нажатую кнопку next или prev
     is_change_month = request.args.get('submit_button', None)
     param['calendar'] = get_calendar(is_change_month)
     staff = get_staff()
@@ -70,11 +74,27 @@ def search_data():
     events = get_events()
     return render_template('index.html', staff=staff, news=news, events=events, **param)
 
+# вернет рабочие номера дней кроме дней воскресных и субботних
+def get_work_days():
+    # calendar.monthrange(current_year, current_month)
+    # возвращает кортеж вида (1, 31) диапазон дней для указанного года и месяца
+    result = []
+    for day in range(1, calendar.monthrange(current_year, current_month)[1] + 1):
+        current_day = datetime.datetime(current_year, current_month, day)
+        day_of_week = current_day.weekday()
+        if day_of_week in {0, 1, 2, 3, 4}:
+            result.append(day)
+    return result
+
 
 def get_calendar(is_change_month):
     global current_year
     global current_month
 
+    # рабочие дни
+    work_days = get_work_days()
+
+    # смена месяцев
     if is_change_month == 'next':
         if current_month == 12:
             current_month = 1
@@ -90,34 +110,80 @@ def get_calendar(is_change_month):
             current_month -= 1
 
     cl = calendar.HTMLCalendar(firstweekday=0)
+    # в строке s будет лежать html таблица календаря
     s = cl.formatmonth(current_year, current_month)
-    days = {"Mon": "Пн", "Tue": "Вт", "Wed": "Ср", "Thu": "Чт", "Fri": "Пт", "Sat": "Сб", "Sun": "Вс"}
+    # эта часть для внешнего оформления. там просто анг названия, меняем на русские
+    days = {"Mon": "Пн", "Tue": "Вт", "Wed": "Ср", "Thu": "Чт",
+            "Fri": "Пт", "Sat": "Сб", "Sun": "Вс"}
     me = month_eng[current_month - 1]
     second_line = f'<tr><th colspan="7" class="month">{me} {current_year}</th></tr>'
-
+    s = s.replace(f'<tr><th colspan="7" class="month">{month_eng[current_month]}'
+                  f' {current_year}</th></tr>', second_line)
     s = s.replace(me, month[current_month - 1].capitalize())
+    # меняем англ названия на русские
     for key, value in days.items():
         s = s.replace(key, value)
 
+
     try:
+        # запрос к БД на получение праздничных дней за текущий месяц и год
         conn = psycopg2.connect(dbname=DATABASE, user=DB_USER,
                                 password=PASSWORD, host=HOST, port=PORT)
         cursor = conn.cursor()
         cursor.execute(f"SELECT EXTRACT(DAY FROM exception_date), is_working_day "
-                       f"FROM working_calendar WHERE EXTRACT(MONTH FROM exception_date) = {current_month} "
+                       f"FROM working_calendar "
+                       f"WHERE EXTRACT(MONTH FROM exception_date) = {current_month} "
                        f"and EXTRACT(YEAR FROM exception_date) = {current_year}")
 
+        results = cursor.fetchall()
+        cursor.close()
+
+        days = []
+        for day in results:
+            d = int(day[0])
+            days.append({'num': int(day[0]), 'is_work': day[1]})
+            # в строках добаляем для дня класс holiday
+            if not day[1]:
+                # добавляем в тег td для данного дня класс holiday
+                s = s.replace(f'">{d}<', f' holiday">{d}<')
+                # удаляем день из списка рабочих дней праздничный
+                if d in work_days:
+                    work_days.remove(d)
+
+        # запрос возвращает количество мероприятий в указанный день для текущего месяца и года
+        cursor = conn.cursor()
+        cursor.execute(
+            f"SELECT EXTRACT(DAY FROM date_start), count(*), date_start "
+            f"FROM events e "
+            f"WHERE EXTRACT(MONTH FROM date_start) = {current_month} "
+            f"and EXTRACT(YEAR FROM date_start) = {current_year}"
+            f" GROUP BY date_start")
         results = cursor.fetchall()
         cursor.close()
         conn.close()
         days = []
         for day in results:
             d = int(day[0])
-            days.append({'num': int(day[0]), 'is_work': day[1]})
-            if not day[1]:
-                s = s.replace(f'">{d}<', f' holiday">{d}<')
-        print(days)
-        print(s)
+            days.append({'num': int(day[0]), 'count': day[1]})
+            # добавляем в теги классы five или two или none
+            # если в этот день пять и более мероприятий, то добавляем
+            # в тег td класс five
+            if day[1] >= 5:
+                s = s.replace(f'">{d}<', f' five">{d}<')
+                # удаляем его из списка рабочих дней
+                if d in work_days:
+                    work_days.remove(d)
+            # если в этот день от 2 до 5
+            # в тег td класс two
+            elif day[1] >= 2:
+                s = s.replace(f'">{d}<', f' two">{d}<')
+                # удаляем его из списка рабочих дней
+                if d in work_days:
+                    work_days.remove(d)
+
+        # оставшиеся дни в месяце красим желтым. код цвета указан в задании
+        for day in work_days:
+            s = s.replace(f'">{day}<', f' none">{day}<')
 
     except Exception as e:
         print(f"Ошибка {e}")

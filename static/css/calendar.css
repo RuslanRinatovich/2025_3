@@ -19,4 +19,14 @@ table {
   width: 340px;
 }
 
+td.five {
+  background-color: #FC4343;
+}
 
+td.two {
+  background-color: #89FC43;
+}
+
+td.none {
+  background-color: #F8FC43;
+}
